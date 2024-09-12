@@ -1,0 +1,218 @@
+import pandas as pd
+from sklearn.metrics.pairwise import haversine_distances
+from math import radians
+import ipywidgets as widgets
+from IPython.display import display, HTML, clear_output
+import folium
+from folium.plugins import MarkerCluster
+
+restaurants_df = pd.read_csv('expanded_restaurants_data.csv')
+
+def add_custom_css():
+    styles = """
+    <style>
+    body {
+        font-family: 'Arial', sans-serif;
+        background-color: #f4f4f9;
+        color: #333;
+    }
+    .container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+        background-color: white;
+        border-radius: 8px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    }
+    .header {
+        text-align: center;
+        padding: 10px 0;
+        border-bottom: 2px solid #960121;
+    }
+    .header h1 {
+        color: #960121;
+    }
+    .header h2 {
+        color: #333;
+        font-size: 24px;
+        margin: 0;
+    }
+    .widget-label {
+        font-weight: bold;
+        font-size: 14px;
+        color: #960121;
+    }
+    .output-area {
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 20px;
+        background-color: #f9f9f9;
+        margin-top: 10px;
+    }
+    h3, h4 {
+        color: #960121;
+    }
+    p {
+        font-size: 14px;
+        color: #333;
+    }
+    .btn-search {
+        background-color: #960121;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        font-size: 14px;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-top: 10px;
+    }
+    .btn-search:hover {
+        background-color: #720015;
+    }
+    .welcome-message {
+        font-size: 18px;
+        color: #960121;
+        margin-bottom: 20px;
+    }
+    .restaurant-info {
+        font-size: 16px;
+        color: #333;
+    }
+    .restaurant-info strong {
+        color: #960121;
+    }
+    .restaurant-name {
+        font-size: 20px;
+        font-weight: bold;
+        color: #000;
+    }
+    .restaurant-cuisine, .restaurant-rating, .restaurant-distance {
+        font-size: 18px;
+        color: #555;
+    }
+    .footer {
+        text-align: center;
+        margin-top: 20px;
+        font-size: 14px;
+        color: #555;
+    }
+    .map-container {
+        margin-top: 20px;
+    }
+    </style>
+    """
+    display(HTML(styles))
+
+add_custom_css()
+
+display(HTML("""
+<div class="container">
+    <div class="header">
+        <h1>مرحبًا بك في نظام توصية المطاعم!</h1>
+        <h2>Dine In Team</h2>
+        <p class="welcome-message">جوعان ومحتار وين تروح؟ وصلت وجهتك المطلوبة!</p>
+    </div>
+</div>
+"""))
+
+# اختيار نوع المطعم المفضل
+display(HTML("<h3>قائمة أنواع المطاعم المتاحة:</h3>"))
+available_cuisines = restaurants_df['cuisine'].unique()
+cuisine_dropdown = widgets.Dropdown(options=available_cuisines, description='المطبخ:')
+display(cuisine_dropdown)
+
+# الحصول على الموقع الحالي للمستخدم
+latitude_text = widgets.FloatText(description='خط العرض:')
+longitude_text = widgets.FloatText(description='خط الطول:')
+display(latitude_text, longitude_text)
+
+# تحديد نطاق المسافة
+distance_range_slider = widgets.FloatSlider(min=0, max=50, step=0.1, description='نطاق المسافة (كم):')
+display(distance_range_slider)
+
+# زر البحث ومكان المخرجات
+button = widgets.Button(description='ابحث عن المطعم', button_style='primary')
+output = widgets.Output()
+
+# تخصيص نمط الزر
+button.style.button_color = '#960121'
+button.style.font_weight = 'bold'
+
+display(button, output)
+
+# دالة تنفيذ البحث عند الضغط على الزر
+def on_button_clicked(b):
+    with output:
+        clear_output()
+
+        # الحصول على القيم المدخلة من المستخدم
+        preferred_cuisine = cuisine_dropdown.value
+        user_latitude = latitude_text.value
+        user_longitude = longitude_text.value
+        distance_range = distance_range_slider.value
+
+        # التأكد من أن خط العرض وخط الطول ضمن النطاق الصحيح
+        if not (-90 <= user_latitude <= 90 and -180 <= user_longitude <= 180):
+            display(HTML("<h4>خط العرض أو خط الطول غير صحيح. الرجاء إدخال قيم صحيحة.</h4>"))
+            return
+
+        # حساب المسافة باستخدام haversine
+        restaurants_df['distance'] = restaurants_df.apply(
+            lambda row: haversine_distances(
+                [[radians(user_latitude), radians(user_longitude)],
+                 [radians(row['latitude']), radians(row['longitude'])]]
+            )[1][0] * 6371, axis=1)
+
+        # تصفية المطاعم حسب نوع الطعام والمسافة
+        filtered_restaurants = restaurants_df[
+            (restaurants_df['cuisine'] == preferred_cuisine) & (restaurants_df['distance'] <= distance_range)
+        ]
+
+        # التحقق مما إذا كانت نتيجة البحث فارغة
+        if filtered_restaurants.empty:
+            display(HTML("<h4>لا يوجد مطاعم بهذا النوع قريبة جدًا منك</h4>"))
+        else:
+            # الحصول على المطعم ذو أعلى تقييم
+            top_rated_restaurant = filtered_restaurants.loc[filtered_restaurants['rating'].idxmax()]
+
+            # عرض ترحيب للمستخدم
+            display(HTML("<h4>مرحبًا بك! إليك توصيتي:</h4>"))
+
+            # عرض معلومات المطعم الموصى به
+            restaurant_info_html = f"""
+            <h4>المطعم الموصى به:</h4>
+            <div class="output-area">
+                <p class="restaurant-info restaurant-name">اسم المطعم: {top_rated_restaurant['restaurant_name']}</p>
+                <p class="restaurant-info restaurant-cuisine">نوع الطعام: {top_rated_restaurant['cuisine']}</p>
+                <p class="restaurant-info restaurant-rating">التقييم: {top_rated_restaurant['rating']}</p>
+                <p class="restaurant-info restaurant-distance">المسافة: {top_rated_restaurant['distance']:.2f} كم</p>
+            """
+            if 'website' in top_rated_restaurant and not pd.isna(top_rated_restaurant['website']):
+                restaurant_info_html += f"""
+                <p class="restaurant-info">لمزيد من المعلومات، يمكنك زيارة <a href="{top_rated_restaurant['website']}" target="_blank">موقع المطعم</a>.</p>
+                """
+            restaurant_info_html += "</div>"
+
+            # عرض المعلومات المجمعة
+            display(HTML(restaurant_info_html))
+
+            # إنشاء خريطة تفاعلية وعرضها
+            m = folium.Map(location=[user_latitude, user_longitude], zoom_start=13)
+            folium.Marker([user_latitude, user_longitude], popup="موقعك الحالي", tooltip="موقعك الحالي", icon=folium.Icon(color='blue')).add_to(m)
+            folium.Marker([top_rated_restaurant['latitude'], top_rated_restaurant['longitude']],
+                          popup=f"{top_rated_restaurant['restaurant_name']} (تقييم: {top_rated_restaurant['rating']})",
+                          tooltip=top_rated_restaurant['restaurant_name'],
+                          icon=folium.Icon(color='red')).add_to(m)
+
+            # إضافة طبقة التحكم للخريطة
+            folium.LayerControl().add_to(m)
+            display(m)
+
+# ربط دالة البحث بالزر
+button.on_click(on_button_clicked)
+
+display(HTML("""
+<div class="footer">
+    <p>Created by DINE IN team</p>
+</div>
+"""))
